@@ -1,0 +1,16 @@
+stages:
+  - build
+
+build_and_push:
+  stage: build
+  image: docker:24
+  services:
+    - name: docker:24-dind
+      command: ["--insecure-registry=10.129.4.175:5050"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/sae-test:$CI_COMMIT_SHORT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE/sae-test:$CI_COMMIT_SHORT_SHA"
