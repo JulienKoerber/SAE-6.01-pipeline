@@ -16,11 +16,18 @@ build_and_push:
   services:
     - name: docker:24-dind
       command:
-        - "--insecure-registry=10.129.5.9:5050"
+        - "--insecure-registry=10.129.4.175:5050"
 
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
 
   script:
     - echo "Build de l'image Docker..."

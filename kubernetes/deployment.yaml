@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: sae-app
-        image: 10.129.5.9:5050/root/sae-dev6.01/sae-test:latest
+        image: 10.129.4.175:5050/root/sae-dev6.01/sae-test:latest
         ports:
         - containerPort: 8080
         resources:
