@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sae-app
+  namespace: sae-production
+  labels:
+    app: sae-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sae-app
+  template:
+    metadata:
+      labels:
+        app: sae-app
+    spec:
+      containers:
+      - name: sae-app
+        image: 10.129.5.9:5050/root/sae-dev6.01/sae-test:latest
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
