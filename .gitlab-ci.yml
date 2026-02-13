@@ -15,7 +15,7 @@ build_and_push:
   services:
     - name: docker:24-dind
       command:
-        - "--insecure-registry=10.129.4.175:5050"
+        - "--insecure-registry=10.129.5.9:5050"
 
   variables:
     DOCKER_HOST: tcp://docker:2375
@@ -24,7 +24,7 @@ build_and_push:
   script:
     - echo "Build de l'image Docker..."
     - echo "Image $IMAGE_NAME:$IMAGE_TAG"
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "http://$CI_REGISTRY"
     - docker build -t "$IMAGE_NAME:$IMAGE_TAG" -t "$IMAGE_NAME:latest" .
     - echo "Push de l'image avec le tag $IMAGE_TAG"
     - docker push "$IMAGE_NAME:$IMAGE_TAG"
