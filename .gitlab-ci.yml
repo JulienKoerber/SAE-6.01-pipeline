@@ -41,7 +41,7 @@ deploy_to_k3s:
   tags:
     - docker
 
-  image: bitnami/kubectl:latest
+  image: alpine/k8s:1.28.3
 
   before_script:
     - mkdir -p ~/.kube
