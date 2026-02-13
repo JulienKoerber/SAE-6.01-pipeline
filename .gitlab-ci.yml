@@ -24,19 +24,12 @@ build_and_push:
   script:
     - echo "🔨 Build de l'image Docker..."
     - echo "Image: $IMAGE_NAME:$IMAGE_TAG"
-    
-    # Connexion automatique à la registry GitLab
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
-
-    # Build de l'image Docker à partir du Dockerfile
     - docker build -t "$IMAGE_NAME:$IMAGE_TAG" -t "$IMAGE_NAME:latest" .
-
-    # Push des images vers la registry GitLab
     - echo "📤 Push de l'image avec le tag $IMAGE_TAG..."
     - docker push "$IMAGE_NAME:$IMAGE_TAG"
     - echo "📤 Push de l'image avec le tag latest..."
     - docker push "$IMAGE_NAME:latest"
-    
     - echo "✅ Images buildées et pushées avec succès!"
 
   only:
