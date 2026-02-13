@@ -17,6 +17,9 @@ COPY configs/ ./configs/
 COPY data/ ./data/
 COPY schema/ ./schema/
 
+# Ajouter /app au PYTHONPATH pour que Python trouve le module addrservice
+ENV PYTHONPATH=/app
+
 # Exposer le port 8080
 EXPOSE 8080
 
