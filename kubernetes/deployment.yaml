@@ -1,6 +1,49 @@
 apiVersion: apps/v1
 kind: Deployment
-metadata:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+LICENSErun.py# AutresThumbs.db.DS_Store# OSterraform/kubernetes/.gitlab-ci.yml# CI/CD (déjà dans le repo)LIVRABLES.mdNEXT_STEPS.mdREADME*.md# Documentation*.swo*.swp.idea/.vscode/# IDEhtmlcov/.coverage*.pytest_cache/tests/# Testsenv/ENV/venv/.venv/.Python*.so*$py.class*.py[cod]__pycache__/# Python.gitignoremetadata:
   name: sae-app
   namespace: sae-production
   labels:
@@ -19,7 +62,7 @@ spec:
       - name: sae-app
         image: 10.129.5.9:5050/root/sae-dev6.01/sae-test:latest
         ports:
-        - containerPort: 80
+        - containerPort: 8080
         resources:
           requests:
             memory: "64Mi"
