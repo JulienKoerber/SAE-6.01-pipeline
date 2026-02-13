@@ -1,49 +1,6 @@
 apiVersion: apps/v1
 kind: Deployment
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-LICENSErun.py# AutresThumbs.db.DS_Store# OSterraform/kubernetes/.gitlab-ci.yml# CI/CD (déjà dans le repo)LIVRABLES.mdNEXT_STEPS.mdREADME*.md# Documentation*.swo*.swp.idea/.vscode/# IDEhtmlcov/.coverage*.pytest_cache/tests/# Testsenv/ENV/venv/.venv/.Python*.so*$py.class*.py[cod]__pycache__/# Python.gitignoremetadata:
+metadata:
   name: sae-app
   namespace: sae-production
   labels:
