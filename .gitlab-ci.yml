@@ -1,5 +1,6 @@
 stages:
   - build
+  - deploy
 
 variables:
   IMAGE_NAME: "$CI_REGISTRY_IMAGE/sae-test"
@@ -34,4 +35,28 @@ build_and_push:
 
   only:
     - main
+
+deploy_to_k3s:
+  stage: deploy
+  tags:
+    - docker
+
+  image: bitnami/kubectl:latest
+
+  before_script:
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
+    - chmod 600 ~/.kube/config
+
+  script:
+    - echo "Deploiement sur k3s..."
+    - kubectl get nodes
+    - kubectl set image deployment/sae-app sae-app=$IMAGE_NAME:latest -n sae-production
+    - kubectl rollout status deployment/sae-app -n sae-production --timeout=5m
+    - echo "Deploiement termine avec succes"
+    - kubectl get pods -n sae-production
+
+  only:
+    - main
+    - master
     - master
