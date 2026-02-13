@@ -22,15 +22,15 @@ build_and_push:
     DOCKER_TLS_CERTDIR: ""
 
   script:
-    - echo "🔨 Build de l'image Docker..."
-    - echo "Image: $IMAGE_NAME:$IMAGE_TAG"
+    - echo "Build de l'image Docker..."
+    - echo "Image $IMAGE_NAME:$IMAGE_TAG"
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
     - docker build -t "$IMAGE_NAME:$IMAGE_TAG" -t "$IMAGE_NAME:latest" .
-    - echo "📤 Push de l'image avec le tag $IMAGE_TAG..."
+    - echo "Push de l'image avec le tag $IMAGE_TAG"
     - docker push "$IMAGE_NAME:$IMAGE_TAG"
-    - echo "📤 Push de l'image avec le tag latest..."
+    - echo "Push de l'image avec le tag latest"
     - docker push "$IMAGE_NAME:latest"
-    - echo "✅ Images buildées et pushées avec succès!"
+    - echo "Images buildees et pushees avec succes"
 
   only:
     - main
