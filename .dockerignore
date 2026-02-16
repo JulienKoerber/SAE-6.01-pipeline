@@ -1,0 +1,43 @@
+# Git files
+.git
+.gitignore
+.gitlab-ci.yml
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Tests
+tests/
+
+# Documentation
+*.md
+README*
+LICENSE
+NEXT_STEPS.md
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Kubernetes
+kubernetes/
+
+# Other
+.DS_Store
+*.log
