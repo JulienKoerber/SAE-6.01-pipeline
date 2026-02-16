@@ -4,7 +4,6 @@
 
 ✅ **Structure du projet créée**
 - Manifestes Kubernetes (namespace, deployment, service)
-- Configuration Terraform complète (provider, variables, main, outputs)
 - Pipeline CI/CD amélioré (build + deploy)
 - Scripts de déploiement et vérification
 - Documentation complète (README, QUICKSTART, LIVRABLES)
@@ -103,7 +102,7 @@ Dans GitLab, créez la variable:
 - Protected: ✓
 - Masked: ✓
 
-### 🟢 ÉTAPE 4: Déploiement Initial avec Terraform
+### 🟢 ÉTAPE 4: Déploiement Initial sur k3s
 
 Sur le nœud master k3s:
 
@@ -112,13 +111,7 @@ Sur le nœud master k3s:
 git clone http://10.129.4.175/root/sae-dev6.01.git
 cd sae-dev6.01
 
-# 2. Installer Terraform (si pas déjà fait)
-wget https://releases.hashicorp.com/terraform/1.6.6/terraform_1.6.6_linux_amd64.zip
-unzip terraform_1.6.6_linux_amd64.zip
-sudo mv terraform /usr/local/bin/
-terraform version
-
-# 3. Créer le secret pour la registry GitLab
+# 2. Créer le secret pour la registry GitLab
 kubectl create secret docker-registry gitlab-registry-secret \
   --docker-server=10.129.4.175:5050 \
   --docker-username=root \
@@ -126,19 +119,18 @@ kubectl create secret docker-registry gitlab-registry-secret \
   --docker-email=admin@example.com \
   --namespace=default
 
-# 4. Copier le secret dans le namespace de production
+# 3. Copier le secret dans le namespace de production
 kubectl create namespace sae-production
 kubectl get secret gitlab-registry-secret -n default -o yaml | \
   sed 's/namespace: default/namespace: sae-production/' | \
   kubectl apply -f -
 
-# 5. Déployer avec Terraform
-cd terraform
-terraform init
-terraform plan
-terraform apply -auto-approve
+# 4. Déployer les manifestes Kubernetes
+kubectl apply -f kubernetes/namespace.yaml
+kubectl apply -f kubernetes/deployment.yaml
+kubectl apply -f kubernetes/service.yaml
 
-# 6. Vérifier
+# 5. Vérifier
 kubectl get all -n sae-production
 ```
 
@@ -267,7 +259,7 @@ Avant de considérer le projet terminé, vérifiez:
 - [ ] Le token GitLab est créé
 - [ ] La variable K3S_KUBECONFIG est configurée
 - [ ] Le secret gitlab-registry-secret existe
-- [ ] Terraform a déployé l'infrastructure
+- [ ] Les manifestes Kubernetes sont déployés
 - [ ] Le pipeline CI/CD fonctionne
 - [ ] L'application est accessible sur le NodePort
 
