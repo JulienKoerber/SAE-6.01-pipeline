@@ -19,6 +19,8 @@ import tornado.web
 from addrservice import LOGGER_NAME
 from addrservice.service import AddressBookService
 import addrservice.utils.logutils as logutils
+from addrservice.utils import metrics
+from addrservice.tornado.metrics_handler import MetricsHandler
 
 ADDRESSBOOK_REGEX = r'/addresses/?'
 ADDRESSBOOK_ENTRY_REGEX = r'/addresses/(?P<id>[a-zA-Z0-9-]+)/?'
@@ -67,6 +69,11 @@ class BaseRequestHandler(tornado.web.RequestHandler):
         }
 
         logutils.set_log_context(reason=self._reason)
+
+        # Incrémenter les métriques d'erreur
+        if status_code >= 400:
+            error_type = 'client_error' if status_code < 500 else 'server_error'
+            metrics.errors_total.labels(error_type=error_type).inc()
 
         if 'exc_info' in kwargs:
             exc_info = kwargs['exc_info']
@@ -138,6 +145,10 @@ class AddressBookRequestHandler(BaseRequestHandler):
         try:
             addr = json.loads(self.request.body.decode('utf-8'))
             id = await self.service.create_address(addr)
+            
+            # Incrémenter le compteur d'adresses créées
+            metrics.addresses_created_total.inc()
+            
             addr_uri = ADDRESSBOOK_ENTRY_URI_FORMAT_STR.format(id=id)
             self.set_status(201)
             self.set_header('Location', addr_uri)
@@ -177,6 +188,10 @@ class AddressBookEntryRequestHandler(BaseRequestHandler):
     async def delete(self, id):
         try:
             await self.service.delete_address(id)
+            
+            # Incrémenter le compteur d'adresses supprimées
+            metrics.addresses_deleted_total.inc()
+            
             self.set_status(204)
             self.finish()
         except KeyError as e:
@@ -194,6 +209,19 @@ def log_function(handler: tornado.web.RequestHandler) -> None:
         level = logging.WARNING
     else:
         level = logging.ERROR
+
+    # Enregistrer les métriques Prometheus (sauf pour /metrics lui-même)
+    if handler.request.path != '/metrics':
+        metrics.http_requests_total.labels(
+            method=handler.request.method,
+            endpoint=handler.request.path,
+            status=handler.get_status()
+        ).inc()
+        
+        metrics.http_request_duration_seconds.labels(
+            method=handler.request.method,
+            endpoint=handler.request.path
+        ).observe(handler.request.request_time())
 
     logutils.log(
         logger,
@@ -216,6 +244,8 @@ def make_addrservice_app(
 
     app = tornado.web.Application(
         [
+            # Metrics endpoint
+            (r'/metrics', MetricsHandler),
             # Address Book endpoints
             (ADDRESSBOOK_REGEX, AddressBookRequestHandler,
                 dict(service=service, config=config, logger=logger)),
