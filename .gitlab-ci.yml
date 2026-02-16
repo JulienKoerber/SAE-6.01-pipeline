@@ -3,7 +3,8 @@ stages:
   - deploy
 
 variables:
-  IMAGE_NAME: "$CI_REGISTRY_IMAGE/sae-test"
+  REGISTRY: "10.129.4.175:5050"
+  IMAGE_NAME: "$REGISTRY/$CI_PROJECT_PATH/sae-test"
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
 
 build_and_push:
@@ -13,62 +14,33 @@ build_and_push:
 
   image: docker:24
 
-  services:
-    - name: docker:24-dind
-      command:
-        - "--insecure-registry=10.129.4.175:5050"
-        - "--registry-mirror=http://10.129.4.175:5050"
-
   variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_DRIVER: overlay2
-
-  retry:
-    max: 2
-    when:
-      - runner_system_failure
-      - stuck_or_timeout_failure
+    DOCKER_HOST: unix:///var/run/docker.sock
 
   before_script:
-    # Attendre que Docker soit prêt
-    - |
-      echo "Attente du daemon Docker..."
-      for i in $(seq 1 30); do
-        if docker info >/dev/null 2>&1; then
-          echo "Docker daemon est prêt!"
-          break
-        fi
-        echo "Tentative $i/30 - Docker n'est pas encore prêt..."
-        sleep 2
-      done
-      docker info
+    - docker info
     - |
       mkdir -p $HOME/.docker
-      # Créer les credentials directement sans docker login
       AUTH=$(echo -n "$CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD" | base64)
       cat > $HOME/.docker/config.json <<EOF
       {
         "auths": {
-          "10.129.4.175:5050": {
+          "$REGISTRY": {
             "auth": "$AUTH"
           }
         }
       }
       EOF
-    - echo "Configuration Docker créée"
 
   script:
     - echo "Build de l'image Docker..."
-    - export FULL_IMAGE_NAME="10.129.4.175:5050/$CI_PROJECT_PATH/sae-test"
-    - echo "Image $FULL_IMAGE_NAME:$IMAGE_TAG"
-    - docker build -t "$FULL_IMAGE_NAME:$IMAGE_TAG" -t "$FULL_IMAGE_NAME:latest" .
-    - docker build -t "$FULL_IMAGE_NAME:$IMAGE_TAG" -t "$FULL_IMAGE_NAME:latest" .
+    - echo "Image complète: $IMAGE_NAME:$IMAGE_TAG"
+    - docker build -t "$IMAGE_NAME:$IMAGE_TAG" -t "$IMAGE_NAME:latest" .
     - echo "Push de l'image avec le tag $IMAGE_TAG"
-    - docker push "$FULL_IMAGE_NAME:$IMAGE_TAG"
+    - docker push "$IMAGE_NAME:$IMAGE_TAG"
     - echo "Push de l'image avec le tag latest"
-    - docker push "$FULL_IMAGE_NAME:latest"
-    - echo "Images buildees et pushees avec succes"
+    - docker push "$IMAGE_NAME:latest"
+    - echo "✅ Images buildées et pushées avec succès"
 
   only:
     - main
@@ -86,12 +58,12 @@ deploy_to_k3s:
     - chmod 600 ~/.kube/config
 
   script:
-    - echo "Deploiement sur k3s..."
-    - export FULL_IMAGE_NAME="10.129.4.175:5050/$CI_PROJECT_PATH/sae-test"
+    - echo "Déploiement sur k3s..."
+    - echo "Image à déployer: $IMAGE_NAME:latest"
     - kubectl get nodes
-    - kubectl set image deployment/sae-app sae-app=$FULL_IMAGE_NAME:latest -n sae-production
+    - kubectl set image deployment/sae-app sae-app=$IMAGE_NAME:latest -n sae-production
     - kubectl rollout status deployment/sae-app -n sae-production --timeout=5m
-    - echo "Deploiement termine avec succes"
+    - echo "✅ Déploiement terminé avec succès"
     - kubectl get pods -n sae-production
 
   only:
