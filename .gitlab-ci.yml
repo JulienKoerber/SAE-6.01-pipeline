@@ -32,7 +32,7 @@ build_and_push:
   script:
     - echo "Build de l'image Docker..."
     - echo "Image $IMAGE_NAME:$IMAGE_TAG"
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "http://$CI_REGISTRY"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker build -t "$IMAGE_NAME:$IMAGE_TAG" -t "$IMAGE_NAME:latest" .
     - echo "Push de l'image avec le tag $IMAGE_TAG"
     - docker push "$IMAGE_NAME:$IMAGE_TAG"
