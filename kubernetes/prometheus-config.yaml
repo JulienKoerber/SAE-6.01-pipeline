@@ -20,6 +20,12 @@ data:
               names:
                 - sae-production
         relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_phase]
+            action: keep
+            regex: Running
+          - source_labels: [__meta_kubernetes_pod_ready]
+            action: keep
+            regex: "true"
           - source_labels: [__meta_kubernetes_pod_label_app]
             action: keep
             regex: sae-app
