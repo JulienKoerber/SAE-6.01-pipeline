@@ -4,7 +4,7 @@ stages:
   - deploy
 
 variables:
-  REGISTRY: "10.129.4.175:5050"
+  REGISTRY: "10.129.5.159:5050"
   IMAGE_NAME: "$REGISTRY/$CI_PROJECT_PATH/sae-test"
   IMAGE_TAG: "$CI_COMMIT_SHORT_SHA"
   DOCKER_DRIVER: overlay2

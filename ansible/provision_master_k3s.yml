@@ -1,0 +1,377 @@
+---
+- name: Provision single VM Master-k3s on Proxmox
+  hosts: localhost
+  gather_facts: false
+  vars_prompt:
+    - name: proxmox_api_user
+      prompt: "Proxmox API user (ex: root@pam)"
+      private: false
+    - name: proxmox_api_token_id
+      prompt: "Proxmox token id (ex: ansible)"
+      private: false
+    - name: proxmox_api_token_secret
+      prompt: "Proxmox token secret"
+      private: true
+    - name: template_vmid
+      prompt: "Proxmox template VMID (recommended, leave empty to use name)"
+      private: false
+      default: ""
+    - name: template_name
+      prompt: "Proxmox template name (used if VMID is empty)"
+      private: false
+      default: ""
+    - name: registry_username
+      prompt: "Registry username (optional)"
+      private: false
+      default: ""
+    - name: registry_password
+      prompt: "Registry password/token (optional)"
+      private: true
+      default: ""
+
+  vars:
+    proxmox_api_host: "10.129.4.40"
+    proxmox_api_port: "8006"
+    proxmox_node: "pve"
+
+    force_recreate_vm: true
+    vm_gateway: "10.129.15.254"
+    vm_netmask_cidr: "20"
+    vm_disk_target_size: "20G"
+
+    master_name: "Master-k3s"
+    master_vmid: 301
+    master_ip: "10.129.5.203"
+    master_cores: 2
+    master_memory: 4096
+    vm_ssh_user: "debian"
+    vm_ssh_password: "master123"
+
+  pre_tasks:
+    - name: Validate Proxmox API credentials are set
+      ansible.builtin.assert:
+        that:
+          - proxmox_api_user | length > 0
+          - proxmox_api_token_id | length > 0
+          - proxmox_api_token_secret | length > 0
+
+    - name: Validate template selector inputs
+      ansible.builtin.assert:
+        that:
+          - (template_name | length > 0) or (template_vmid | length > 0)
+        fail_msg: "Set template_vmid or template_name."
+
+    - name: Verify Proxmox API token authentication
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/version"
+        method: GET
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        status_code: 200
+      no_log: true
+
+    - name: Fetch Proxmox VM resources
+      ansible.builtin.uri:
+        url: "https://{{ proxmox_api_host }}:{{ proxmox_api_port }}/api2/json/cluster/resources?type=vm"
+        method: GET
+        validate_certs: false
+        headers:
+          Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+        status_code: 200
+        return_content: true
+      register: proxmox_vm_resources
+      no_log: true
+
+    - name: Build template lists
+      ansible.builtin.set_fact:
+        proxmox_template_names: "{{ proxmox_vm_resources.json.data | selectattr('template', 'defined') | selectattr('template', 'equalto', 1) | map(attribute='name') | list }}"
+        proxmox_template_vmids: "{{ proxmox_vm_resources.json.data | selectattr('template', 'defined') | selectattr('template', 'equalto', 1) | map(attribute='vmid') | map('string') | list }}"
+        proxmox_template_map: "{{ dict((proxmox_vm_resources.json.data | selectattr('template', 'defined') | selectattr('template', 'equalto', 1) | map(attribute='vmid') | map('string') | list) | zip(proxmox_vm_resources.json.data | selectattr('template', 'defined') | selectattr('template', 'equalto', 1) | map(attribute='name') | list)) }}"
+
+    - name: Validate template exists
+      ansible.builtin.assert:
+        that:
+          - (template_vmid | length == 0) or (template_vmid in proxmox_template_vmids)
+          - (template_name | length == 0) or (template_name in proxmox_template_names)
+        fail_msg: "Template not found. Names={{ proxmox_template_names }} VMIDs={{ proxmox_template_vmids }}"
+
+    - name: Resolve clone source
+      ansible.builtin.set_fact:
+        clone_source: "{{ proxmox_template_map[template_vmid] if (template_vmid | length > 0) else template_name }}"
+
+  tasks:
+    - name: Read local public SSH key
+      ansible.builtin.shell: |
+        if [ -f "$HOME/.ssh/id_ed25519.pub" ]; then
+          cat "$HOME/.ssh/id_ed25519.pub"
+        elif [ -f "$HOME/.ssh/id_rsa.pub" ]; then
+          cat "$HOME/.ssh/id_rsa.pub"
+        else
+          exit 1
+        fi
+      register: local_ssh_public_key
+      changed_when: false
+
+    - name: Detect local private SSH key path
+      ansible.builtin.shell: |
+        if [ -f "$HOME/.ssh/id_ed25519" ]; then
+          echo "$HOME/.ssh/id_ed25519"
+        elif [ -f "$HOME/.ssh/id_rsa" ]; then
+          echo "$HOME/.ssh/id_rsa"
+        else
+          exit 1
+        fi
+      register: local_ssh_private_key_path
+      changed_when: false
+
+    - name: Remove stale SSH host key for master IP
+      ansible.builtin.command: "ssh-keygen -R {{ master_ip }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Remove previous VM when requested
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        validate_certs: false
+        node: "{{ proxmox_node }}"
+        vmid: "{{ master_vmid }}"
+        state: absent
+      when: force_recreate_vm | bool
+      failed_when: false
+
+    - name: Clone Master-k3s VM
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        validate_certs: false
+        node: "{{ proxmox_node }}"
+        clone: "{{ clone_source }}"
+        newid: "{{ master_vmid }}"
+        name: "{{ master_name }}"
+        cores: "{{ master_cores }}"
+        memory: "{{ master_memory }}"
+        full: true
+        timeout: 300
+        state: present
+
+    - name: Configure cloud-init and static IP on Master-k3s
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        validate_certs: false
+        node: "{{ proxmox_node }}"
+        vmid: "{{ master_vmid }}"
+        ciuser: "{{ vm_ssh_user }}"
+        cipassword: "{{ vm_ssh_password }}"
+        citype: nocloud
+        sshkeys: "{{ local_ssh_public_key.stdout }}"
+        ipconfig:
+          ipconfig0: "ip={{ master_ip }}/{{ vm_netmask_cidr }},gw={{ vm_gateway }}"
+        onboot: true
+        agent: true
+        template: false
+        update: true
+        state: present
+      no_log: true
+
+    - name: Resize Master disk on scsi0
+      community.proxmox.proxmox_disk:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        validate_certs: false
+        vmid: "{{ master_vmid }}"
+        disk: scsi0
+        state: resized
+        size: "{{ vm_disk_target_size }}"
+      register: disk_resize_scsi
+      failed_when: false
+
+    - name: Resize Master disk on virtio0 fallback
+      community.proxmox.proxmox_disk:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        validate_certs: false
+        vmid: "{{ master_vmid }}"
+        disk: virtio0
+        state: resized
+        size: "{{ vm_disk_target_size }}"
+      when: disk_resize_scsi is failed
+      failed_when: false
+
+    - name: Start Master-k3s VM
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id }}"
+        api_token_secret: "{{ proxmox_api_token_secret }}"
+        validate_certs: false
+        node: "{{ proxmox_node }}"
+        vmid: "{{ master_vmid }}"
+        state: started
+        timeout: 300
+
+    - name: Wait for SSH TCP port on master
+      ansible.builtin.shell: |
+        for i in $(seq 1 120); do
+          nc -z "{{ master_ip }}" 22 >/dev/null 2>&1 && exit 0
+          sleep 5
+        done
+        exit 1
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Wait until SSH key auth works
+      ansible.builtin.shell: |
+        for i in $(seq 1 60); do
+          ssh -i "{{ local_ssh_private_key_path.stdout | trim }}" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=5 \
+            {{ vm_ssh_user }}@{{ master_ip }} 'echo ready' >/dev/null 2>&1 && exit 0
+          sleep 5
+        done
+        exit 1
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Install base packages and prepare node through SSH
+      ansible.builtin.shell: |
+        ssh -i "{{ local_ssh_private_key_path.stdout | trim }}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ vm_ssh_user }}@{{ master_ip }} '
+          sudo cloud-init status --wait || true
+          sudo bash -lc "export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get install -y python3 curl ca-certificates"
+          sudo swapoff -a || true
+          sudo sed -ri "/\\sswap\\s/s/^#?/#/" /etc/fstab
+          sudo tee /etc/sysctl.d/99-kubernetes-cri.conf >/dev/null <<EOF
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          EOF
+          sudo sysctl --system >/dev/null
+          sudo mkdir -p /etc/rancher/k3s
+          sudo tee /etc/rancher/k3s/registries.yaml >/dev/null <<EOF
+          mirrors:
+            "10.129.5.159:5050":
+              endpoint:
+                - "http://10.129.5.159:5050"
+          EOF
+        '
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Install k3s server via SSH
+      ansible.builtin.shell: |
+        ssh -i "{{ local_ssh_private_key_path.stdout | trim }}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ vm_ssh_user }}@{{ master_ip }} '
+          if [ ! -f /etc/rancher/k3s/k3s.yaml ]; then
+            curl -sfL https://get.k3s.io | sudo INSTALL_K3S_EXEC="server --write-kubeconfig-mode 644 --node-ip {{ master_ip }}" sh -
+          fi
+          sudo systemctl restart k3s
+        '
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Wait for k3s API ready via SSH
+      ansible.builtin.shell: |
+        ssh -i "{{ local_ssh_private_key_path.stdout | trim }}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ vm_ssh_user }}@{{ master_ip }} '
+          for i in $(seq 1 40); do
+            sudo k3s kubectl get --raw=/readyz >/dev/null 2>&1 && exit 0
+            sleep 5
+          done
+          exit 1
+        '
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Copy repository to master through rsync
+      ansible.builtin.shell: |
+        rsync -az --delete -e "ssh -i {{ local_ssh_private_key_path.stdout | trim }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+          "{{ playbook_dir }}/../" "{{ vm_ssh_user }}@{{ master_ip }}:/tmp/sae-dev6.01/"
+        ssh -i "{{ local_ssh_private_key_path.stdout | trim }}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ vm_ssh_user }}@{{ master_ip }} '
+          sudo rm -rf /opt/sae-dev6.01
+          sudo mkdir -p /opt
+          sudo mv /tmp/sae-dev6.01 /opt/sae-dev6.01
+          sudo chown -R root:root /opt/sae-dev6.01
+        '
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Deploy app and monitoring stack through SSH
+      ansible.builtin.shell: |
+        ssh -i "{{ local_ssh_private_key_path.stdout | trim }}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ vm_ssh_user }}@{{ master_ip }} '
+          sudo k3s kubectl apply -f /opt/sae-dev6.01/kubernetes/namespace.yaml
+          if [ -n "{{ registry_username }}" ] && [ -n "{{ registry_password }}" ]; then
+            sudo k3s kubectl create secret docker-registry gitlab-registry-secret \
+              --docker-server=10.129.5.159:5050 \
+              --docker-username="{{ registry_username }}" \
+              --docker-password="{{ registry_password }}" \
+              -n sae-production \
+              --dry-run=client -o yaml | sudo k3s kubectl apply -f -
+          else
+            sudo k3s kubectl create secret generic gitlab-registry-secret \
+              --type=kubernetes.io/dockerconfigjson \
+              --from-literal=.dockerconfigjson="{\"auths\":{}}" \
+              -n sae-production \
+              --dry-run=client -o yaml | sudo k3s kubectl apply -f -
+          fi
+          sudo k3s kubectl apply -f /opt/sae-dev6.01/kubernetes/deployment.yaml
+          sudo k3s kubectl apply -f /opt/sae-dev6.01/kubernetes/service.yaml
+          sudo k3s kubectl scale deployment/sae-app -n sae-production --replicas=1
+          sudo k3s kubectl apply -f /opt/sae-dev6.01/kubernetes/prometheus-config.yaml
+          sudo k3s kubectl apply -f /opt/sae-dev6.01/kubernetes/prometheus.yaml
+          sudo k3s kubectl apply -f /opt/sae-dev6.01/kubernetes/grafana.yaml
+          sudo k3s kubectl rollout restart deployment/sae-app -n sae-production
+          sudo k3s kubectl rollout restart deployment/prometheus -n default
+          sudo k3s kubectl rollout restart deployment/grafana -n default
+          sudo k3s kubectl rollout status deployment/sae-app -n sae-production --timeout=600s
+          sudo k3s kubectl rollout status deployment/prometheus -n default --timeout=600s
+          sudo k3s kubectl rollout status deployment/grafana -n default --timeout=600s
+        '
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Verify NodePorts from localhost
+      ansible.builtin.wait_for:
+        host: "{{ master_ip }}"
+        port: "{{ item }}"
+        delay: 2
+        timeout: 240
+      loop:
+        - 30080
+        - 30090
+        - 30030
+
+    - name: Verify service endpoints from localhost
+      ansible.builtin.shell: |
+        curl -fsS "http://{{ master_ip }}:30080/addresses" >/dev/null
+        curl -fsS "http://{{ master_ip }}:30090/-/ready" >/dev/null
+        curl -fsS "http://{{ master_ip }}:30030/api/health" >/dev/null
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Show access summary
+      ansible.builtin.debug:
+        msg:
+          - "Master VM: {{ master_name }} ({{ master_ip }})"
+          - "Tornado: http://{{ master_ip }}:30080/addresses"
+          - "Prometheus: http://{{ master_ip }}:30090"
+          - "Grafana: http://{{ master_ip }}:30030 (admin/admin)"
