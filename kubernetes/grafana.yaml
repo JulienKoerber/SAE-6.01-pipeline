@@ -46,12 +46,22 @@ spec:
           mountPath: /var/lib/grafana
         - name: datasources-volume
           mountPath: /etc/grafana/provisioning/datasources
+        - name: dashboard-provider-volume
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboards-volume
+          mountPath: /var/lib/grafana/dashboards
       volumes:
       - name: storage-volume
         emptyDir: {}
       - name: datasources-volume
         configMap:
           name: grafana-datasources
+      - name: dashboard-provider-volume
+        configMap:
+          name: grafana-dashboard-provider
+      - name: dashboards-volume
+        configMap:
+          name: grafana-dashboards
 
 ---
 apiVersion: v1
@@ -69,3 +79,113 @@ data:
       url: http://prometheus:9090
       isDefault: true
       editable: true
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: default
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'sae-default'
+        orgId: 1
+        folder: 'SAE'
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: default
+data:
+  sae-observability.json: |
+    {
+      "id": null,
+      "uid": "sae-observability",
+      "title": "SAE Observability",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "5s",
+      "time": {
+        "from": "now-15m",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Requests per Second",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(addrservice_http_requests_total[1m]))",
+              "legendFormat": "RPS"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Latency p95 (s)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(addrservice_http_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "p95"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Total Requests",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(addrservice_http_requests_total)",
+              "legendFormat": "total"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "orientation": "auto",
+            "textMode": "auto",
+            "colorMode": "value"
+          }
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "Address Book Size",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "addrservice_addresses_total",
+              "legendFormat": "addresses"
+            }
+          ]
+        }
+      ]
+    }

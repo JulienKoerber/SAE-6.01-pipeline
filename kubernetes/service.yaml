@@ -7,6 +7,7 @@ metadata:
     app: sae-app
 spec:
   type: NodePort
+  sessionAffinity: ClientIP
   selector:
     app: sae-app
   ports:

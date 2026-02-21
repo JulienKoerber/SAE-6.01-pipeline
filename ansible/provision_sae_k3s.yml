@@ -1,4 +1,5 @@
 ---
+<<<<<<< HEAD
 - name: Provision VMs on Proxmox and build runtime inventory
   hosts: localhost
   gather_facts: false
@@ -184,6 +185,35 @@
       failed_when: false
 
     - name: Read local public SSH key
+=======
+- name: Provision local Parallels VMs and build runtime inventory
+  hosts: localhost
+  gather_facts: false
+  vars:
+    parallels_template_vm: ""
+    parallels_network_mode: "shared"
+    force_recreate_vms: false
+
+    vm_ssh_user: "debian"
+    vm_ssh_password: "master123"
+
+    local_app_image: "sae-local:latest"
+    local_image_archive: "/tmp/sae-local-image.tar"
+    build_local_image: true
+
+    parallels_vms:
+      - { name: "ansible", role: "ansible", cpus: 1, memory_mb: 1024 }
+      - { name: "master", role: "master", cpus: 2, memory_mb: 2048 }
+      - { name: "worker1", role: "worker", cpus: 1, memory_mb: 1536 }
+      - { name: "worker2", role: "worker", cpus: 1, memory_mb: 1536 }
+
+  tasks:
+    - name: Ensure Parallels CLI is installed
+      ansible.builtin.command: command -v prlctl
+      changed_when: false
+
+    - name: Ensure local SSH public key exists
+>>>>>>> 8727e93 (local Mac)
       ansible.builtin.shell: |
         if [ -f "$HOME/.ssh/id_ed25519.pub" ]; then
           cat "$HOME/.ssh/id_ed25519.pub"
@@ -194,9 +224,14 @@
         fi
       register: local_ssh_public_key
       changed_when: false
+<<<<<<< HEAD
       failed_when: local_ssh_public_key.stdout | trim == ""
 
     - name: Detect local private SSH key path
+=======
+
+    - name: Ensure local SSH private key exists
+>>>>>>> 8727e93 (local Mac)
       ansible.builtin.shell: |
         if [ -f "$HOME/.ssh/id_ed25519" ]; then
           echo "$HOME/.ssh/id_ed25519"
@@ -207,6 +242,7 @@
         fi
       register: local_ssh_private_key_path
       changed_when: false
+<<<<<<< HEAD
       failed_when: local_ssh_private_key_path.stdout | trim == ""
 
     - name: Clone VMs from template
@@ -326,15 +362,214 @@
     registry_host: "10.129.4.175:5050"
   tasks:
     - name: Wait until SSH TCP port is open on new VMs
+=======
+
+    - name: List available Parallels VM names
+      ansible.builtin.command: prlctl list -a -o name
+      register: parallels_vm_list
+      changed_when: false
+
+    - name: Resolve template VM automatically when not provided
+      ansible.builtin.set_fact:
+        selected_template_vm: >-
+          {{
+            (parallels_template_vm | trim)
+            if (parallels_template_vm | trim | length > 0)
+            else (
+              (parallels_vm_list.stdout_lines
+                | reject('equalto', 'NAME')
+                | select('search', 'Debian.*12')
+                | list
+                | first
+              ) | default('')
+            )
+          }}
+
+    - name: Ensure a Parallels template/base VM is available
+      ansible.builtin.assert:
+        that:
+          - selected_template_vm | length > 0
+        fail_msg: "No base VM found. Set -e parallels_template_vm='<existing_vm_name>' (example: Debian GNU Linux 12.11 ARM64)."
+
+    - name: Stop existing VMs when forced recreate is enabled
+      ansible.builtin.command: prlctl stop {{ item.name }} --kill
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: force_recreate_vms | bool
+      failed_when: false
+      changed_when: true
+
+    - name: Delete existing VMs when forced recreate is enabled
+      ansible.builtin.command: prlctl delete {{ item.name }}
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: force_recreate_vms | bool
+      failed_when: false
+      changed_when: true
+
+    - name: Check if VM already exists
+      ansible.builtin.command: prlctl list -a --info {{ item.name }}
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: vm_exists_checks
+      failed_when: false
+      changed_when: false
+
+    - name: Create linked clones from template when missing
+      ansible.builtin.command:
+        argv:
+          - prlctl
+          - clone
+          - "{{ selected_template_vm }}"
+          - --name
+          - "{{ item.item.name }}"
+          - --linked
+      loop: "{{ vm_exists_checks.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.rc != 0
+
+    - name: Configure VM CPU and RAM profile
+      ansible.builtin.command: prlctl set {{ item.name }} --cpus {{ item.cpus }} --memsize {{ item.memory_mb }}
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Configure VM network mode
+      ansible.builtin.command: prlctl set {{ item.name }} --device-set net0 --type {{ parallels_network_mode }}
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Start all VMs
+      ansible.builtin.command: prlctl start {{ item.name }}
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      failed_when: false
+      changed_when: true
+
+    - name: Wait until each VM reports an IP through Parallels Tools
+      ansible.builtin.shell: |
+        for i in $(seq 1 90); do
+          IP=$(prlctl list -a -o name,ip | awk '$1=="{{ item.name }}" {print $2}')
+          if [ -n "$IP" ]; then
+            echo "$IP"
+            exit 0
+          fi
+          sleep 2
+        done
+        exit 1
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: vm_ip_results
+      changed_when: false
+
+    - name: Build discovered IP map
+      ansible.builtin.set_fact:
+        discovered_ips: "{{ discovered_ips | default({}) | combine({item.item.name: (item.stdout | trim)}) }}"
+      loop: "{{ vm_ip_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Bootstrap SSH user, sudo and sshd in every VM
+      ansible.builtin.shell: |
+        prlctl exec {{ item.name }} "bash -lc '
+          set -e
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update >/dev/null 2>&1 || true
+          apt-get install -y sudo openssh-server >/dev/null 2>&1 || true
+          id -u {{ vm_ssh_user }} >/dev/null 2>&1 || useradd -m -s /bin/bash {{ vm_ssh_user }}
+          echo {{ vm_ssh_user }}:{{ vm_ssh_password }} | chpasswd
+          usermod -aG sudo {{ vm_ssh_user }} || true
+          mkdir -p /etc/sudoers.d
+          echo \"{{ vm_ssh_user }} ALL=(ALL) NOPASSWD:ALL\" > /etc/sudoers.d/90-{{ vm_ssh_user }}
+          chmod 440 /etc/sudoers.d/90-{{ vm_ssh_user }}
+          systemctl enable ssh >/dev/null 2>&1 || true
+          systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1 || true
+        '"
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+
+    - name: Inject local SSH public key inside VMs
+      ansible.builtin.shell: |
+        prlctl exec {{ item.name }} "bash -lc 'mkdir -p /home/{{ vm_ssh_user }}/.ssh && chmod 700 /home/{{ vm_ssh_user }}/.ssh && echo \"{{ local_ssh_public_key.stdout | trim }}\" >> /home/{{ vm_ssh_user }}/.ssh/authorized_keys && chmod 600 /home/{{ vm_ssh_user }}/.ssh/authorized_keys && chown -R {{ vm_ssh_user }}:{{ vm_ssh_user }} /home/{{ vm_ssh_user }}/.ssh'"
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+      failed_when: false
+
+    - name: Remove stale SSH host keys
+      ansible.builtin.command: ssh-keygen -R {{ discovered_ips[item.name] }}
+      loop: "{{ parallels_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Register ansible VM in runtime inventory
+      ansible.builtin.add_host:
+        name: ansible-vm
+        groups: ansible_vm
+        ansible_host: "{{ discovered_ips['ansible'] }}"
+        ansible_user: "{{ vm_ssh_user }}"
+        ansible_ssh_private_key_file: "{{ local_ssh_private_key_path.stdout | trim }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ControlMaster=no -o ControlPersist=no"
+        ansible_python_interpreter: "/usr/bin/python3"
+
+    - name: Register master and workers in runtime inventory
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: "k3s_nodes,{{ 'k3s_master' if item.role == 'master' else 'k3s_workers' }}"
+        ansible_host: "{{ discovered_ips[item.name] }}"
+        ansible_user: "{{ vm_ssh_user }}"
+        ansible_ssh_private_key_file: "{{ local_ssh_private_key_path.stdout | trim }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ControlMaster=no -o ControlPersist=no"
+        ansible_python_interpreter: "/usr/bin/python3"
+      loop: "{{ parallels_vms | rejectattr('role', 'equalto', 'ansible') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Show discovered local VM IPs
+      ansible.builtin.debug:
+        msg:
+          ansible_vm: "{{ discovered_ips['ansible'] }}"
+          master: "{{ discovered_ips['master'] }}"
+          worker1: "{{ discovered_ips['worker1'] }}"
+          worker2: "{{ discovered_ips['worker2'] }}"
+
+- name: Prepare OS prerequisites on K3s nodes
+  hosts: k3s_nodes
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Ensure unique hostname on each K3s node
+      ansible.builtin.command: hostnamectl set-hostname {{ inventory_hostname }}
+      changed_when: false
+
+    - name: Wait for SSH access
+>>>>>>> 8727e93 (local Mac)
       ansible.builtin.wait_for:
         host: "{{ ansible_host }}"
         port: 22
         delay: 2
+<<<<<<< HEAD
         timeout: 600
+=======
+        timeout: 300
+>>>>>>> 8727e93 (local Mac)
       delegate_to: localhost
       become: false
       changed_when: false
 
+<<<<<<< HEAD
     - name: Wait until remote commands execute via SSH
       ansible.builtin.raw: echo ready
       register: ssh_ready_raw
@@ -344,6 +579,9 @@
       changed_when: false
 
     - name: Wait for cloud-init to complete
+=======
+    - name: Wait for cloud-init completion
+>>>>>>> 8727e93 (local Mac)
       ansible.builtin.raw: cloud-init status --wait || true
       changed_when: false
       failed_when: false
@@ -352,7 +590,11 @@
       ansible.builtin.raw: |
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
+<<<<<<< HEAD
         apt-get install -y curl ca-certificates python3
+=======
+        apt-get install -y curl ca-certificates python3 rsync
+>>>>>>> 8727e93 (local Mac)
       changed_when: false
 
     - name: Disable swap permanently
@@ -380,6 +622,7 @@
       ansible.builtin.command: sysctl --system
       changed_when: false
 
+<<<<<<< HEAD
     - name: Ensure K3s config directory exists
       ansible.builtin.file:
         path: /etc/rancher/k3s
@@ -396,6 +639,8 @@
               endpoint:
                 - "http://{{ registry_host }}"
 
+=======
+>>>>>>> 8727e93 (local Mac)
 - name: Install K3s server on master
   hosts: k3s_master
   gather_facts: false
@@ -407,12 +652,16 @@
       args:
         creates: /etc/rancher/k3s/k3s.yaml
 
+<<<<<<< HEAD
     - name: Restart K3s server to reload registries config
       ansible.builtin.service:
         name: k3s
         state: restarted
 
     - name: Wait for K3s API readyz
+=======
+    - name: Wait for K3s API readiness
+>>>>>>> 8727e93 (local Mac)
       ansible.builtin.command: k3s kubectl get --raw=/readyz
       register: master_ready
       retries: 30
@@ -427,6 +676,10 @@
 
 - name: Install K3s agents on workers
   hosts: k3s_workers
+<<<<<<< HEAD
+=======
+  serial: 1
+>>>>>>> 8727e93 (local Mac)
   gather_facts: false
   become: true
   vars:
@@ -439,6 +692,7 @@
       args:
         creates: /etc/systemd/system/k3s-agent.service
 
+<<<<<<< HEAD
     - name: Restart K3s agent to reload registries config
       ansible.builtin.service:
         name: k3s-agent
@@ -517,12 +771,203 @@
       changed_when: false
 
     - name: Restart deployments to load latest config and images
+=======
+    - name: Ensure K3s agent service is enabled and running
+      ansible.builtin.service:
+        name: k3s-agent
+        enabled: true
+        state: started
+
+- name: Build local Tornado image on macOS host
+  hosts: localhost
+  gather_facts: false
+  vars:
+    local_app_image: "sae-local:latest"
+    local_image_archive: "/tmp/sae-local-image.tar"
+    build_local_image: true
+    repo_src_path: "{{ playbook_dir }}/.."
+  tasks:
+    - name: Ensure Docker CLI exists for local build
+      ansible.builtin.command: command -v docker
+      changed_when: false
+      when: build_local_image | bool
+
+    - name: Check Docker daemon availability
+      ansible.builtin.command: docker info
+      register: docker_info_check
+      changed_when: false
+      failed_when: false
+      when: build_local_image | bool
+
+    - name: Start Docker Desktop when daemon is unavailable
+      ansible.builtin.command: open -a Docker
+      when:
+        - build_local_image | bool
+        - docker_info_check.rc != 0
+      changed_when: true
+      failed_when: false
+
+    - name: Wait for Docker daemon to become ready
+      ansible.builtin.command: docker info
+      register: docker_daemon_ready
+      retries: 40
+      delay: 3
+      until: docker_daemon_ready.rc == 0
+      changed_when: false
+      failed_when: false
+      when: build_local_image | bool
+
+    - name: Resolve if local image build is available
+      ansible.builtin.set_fact:
+        effective_build_local_image: "{{ build_local_image and (docker_daemon_ready.rc | default(1)) == 0 }}"
+
+    - name: Build local app image
+      ansible.builtin.command: docker build -t {{ local_app_image }} {{ repo_src_path }}
+      when: effective_build_local_image | bool
+
+    - name: Export local app image tar archive
+      ansible.builtin.command: docker save -o {{ local_image_archive }} {{ local_app_image }}
+      when: effective_build_local_image | bool
+
+    - name: Show build mode
+      ansible.builtin.debug:
+        msg: "effective_build_local_image={{ effective_build_local_image }}"
+
+- name: Import local app image into all K3s nodes
+  hosts: k3s_master
+  gather_facts: false
+  become: true
+  vars:
+    local_image_archive: "/tmp/sae-local-image.tar"
+    effective_build_local_image: "{{ hostvars['localhost'].effective_build_local_image | default(false) }}"
+  tasks:
+    - name: Ensure K3s runtime service is running on each node
+      ansible.builtin.shell: systemctl restart k3s
+      changed_when: false
+
+    - name: Wait for containerd socket on each node
+      ansible.builtin.shell: |
+        for i in $(seq 1 90); do
+          [ -S /run/k3s/containerd/containerd.sock ] && exit 0
+          sleep 2
+        done
+        exit 1
+      changed_when: false
+
+    - name: Copy local app image tar to node
+      ansible.builtin.copy:
+        src: "{{ local_image_archive }}"
+        dest: "{{ local_image_archive }}"
+        mode: "0644"
+      when: effective_build_local_image | bool
+
+    - name: Import image into K3s container runtime
+      ansible.builtin.command: k3s ctr images import {{ local_image_archive }}
+      when: effective_build_local_image | bool
+
+- name: Deploy Tornado app, Prometheus and Grafana
+  hosts: k3s_master
+  gather_facts: false
+  become: true
+  vars:
+    app_namespace: "sae-production"
+    repo_src_path: "{{ playbook_dir }}/.."
+    repo_dst_path: "/opt/sae-dev6.01"
+    vm_ssh_user: "debian"
+    local_app_image: "sae-local:latest"
+    fallback_app_image: "10.129.5.159:5050/root/sae-dev6.01/sae-test:latest"
+    effective_build_local_image: "{{ hostvars['localhost'].effective_build_local_image | default(false) }}"
+  tasks:
+    - name: Resolve desired app image
+      ansible.builtin.set_fact:
+        desired_app_image: "{{ local_app_image if effective_build_local_image | bool else fallback_app_image }}"
+
+    - name: Wait for all K3s nodes to be Ready
+      ansible.builtin.command: k3s kubectl get nodes --no-headers
+      register: nodes_status
+      retries: 40
+      delay: 5
+      until: (nodes_status.stdout_lines | select('search', ' Ready ') | list | length) >= 1
+      changed_when: false
+
+    - name: Remove obsolete legacy master node object
+      ansible.builtin.command: k3s kubectl delete node julien-vm --ignore-not-found=true
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure repository destination directory is writable by SSH user
+      ansible.builtin.file:
+        path: "{{ repo_dst_path }}"
+        state: absent
+
+    - name: Recreate repository destination directory for SSH user
+      ansible.builtin.file:
+        path: "{{ repo_dst_path }}"
+        state: directory
+        owner: "{{ vm_ssh_user }}"
+        group: "{{ vm_ssh_user }}"
+        mode: "0755"
+
+    - name: Sync repository to master node
+      ansible.builtin.shell: >-
+        rsync -az --delete --exclude '.git' \
+        -e "ssh -i {{ hostvars['localhost'].local_ssh_private_key_path.stdout | trim }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+        {{ repo_src_path }}/ {{ vm_ssh_user }}@{{ ansible_host }}:{{ repo_dst_path }}/
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Apply namespaces and services
+      ansible.builtin.command: k3s kubectl apply -f {{ repo_dst_path }}/kubernetes/{{ item }}
+      loop:
+        - namespace.yaml
+        - service.yaml
+        - prometheus-config.yaml
+        - prometheus.yaml
+        - grafana.yaml
+        - deployment.yaml
+      changed_when: false
+
+    - name: Set desired image in deployment
+      ansible.builtin.command: k3s kubectl -n {{ app_namespace }} set image deployment/sae-app sae-app={{ desired_app_image }}
+      changed_when: false
+
+    - name: Pin sae-app to master and scale down for local mode
+      ansible.builtin.command: >-
+        k3s kubectl -n {{ app_namespace }} patch deployment sae-app --type='merge'
+        -p '{"spec":{"replicas":1,"template":{"spec":{"nodeName":"{{ inventory_hostname }}"}}}}'
+      changed_when: false
+
+    - name: Force-delete lingering terminating sae-app pods
+      ansible.builtin.shell: |
+        k3s kubectl -n {{ app_namespace }} get pods --no-headers 2>/dev/null | awk '/^sae-app-.*Terminating/ {print $1}' | \
+        xargs -r -I{} k3s kubectl -n {{ app_namespace }} delete pod {} --force --grace-period=0
+      changed_when: false
+      failed_when: false
+
+    - name: Set imagePullPolicy to IfNotPresent
+      ansible.builtin.command: >-
+        k3s kubectl -n {{ app_namespace }} patch deployment sae-app --type='strategic'
+        -p '{"spec":{"template":{"spec":{"containers":[{"name":"sae-app","imagePullPolicy":"IfNotPresent"}]}}}}'
+      when: effective_build_local_image | bool
+      changed_when: false
+
+    - name: Remove imagePullSecrets when using local image
+      ansible.builtin.command: >-
+        k3s kubectl -n {{ app_namespace }} patch deployment sae-app --type='strategic'
+        -p '{"spec":{"template":{"spec":{"imagePullSecrets":null}}}}'
+      changed_when: false
+      failed_when: false
+
+    - name: Restart all deployments
+>>>>>>> 8727e93 (local Mac)
       ansible.builtin.shell: |
         k3s kubectl rollout restart deployment/sae-app -n sae-production
         k3s kubectl rollout restart deployment/prometheus -n default
         k3s kubectl rollout restart deployment/grafana -n default
       changed_when: false
 
+<<<<<<< HEAD
     - name: Wait for SAE app rollout
       ansible.builtin.command: k3s kubectl rollout status deployment/sae-app -n sae-production --timeout=300s
       changed_when: false
@@ -652,10 +1097,37 @@
       delegate_to: localhost
       become: false
 
+=======
+    - name: Wait for sae-app rollout
+      ansible.builtin.command: k3s kubectl rollout status deployment/sae-app -n sae-production --watch=false
+      register: sae_app_rollout
+      retries: 84
+      delay: 5
+      until: sae_app_rollout.rc == 0
+      changed_when: false
+
+    - name: Wait for Prometheus rollout
+      ansible.builtin.command: k3s kubectl rollout status deployment/prometheus -n default --watch=false
+      register: prometheus_rollout
+      retries: 84
+      delay: 5
+      until: prometheus_rollout.rc == 0
+      changed_when: false
+
+    - name: Wait for Grafana rollout
+      ansible.builtin.command: k3s kubectl rollout status deployment/grafana -n default --watch=false
+      register: grafana_rollout
+      retries: 84
+      delay: 5
+      until: grafana_rollout.rc == 0
+      changed_when: false
+
+>>>>>>> 8727e93 (local Mac)
     - name: Show deployment summary
       ansible.builtin.shell: |
         echo "=== Nodes ==="
         k3s kubectl get nodes -o wide
+<<<<<<< HEAD
         echo "=== sae-app Pods ==="
         k3s kubectl get pods -n sae-production -o wide
         echo "=== Prometheus/Grafana Pods ==="
@@ -673,3 +1145,26 @@
       args:
         executable: /bin/bash
       changed_when: false
+=======
+        echo "=== sae-app pods ==="
+        k3s kubectl get pods -n sae-production -o wide
+        echo "=== monitoring pods ==="
+        k3s kubectl get pods -n default -l app in \(prometheus,grafana\) -o wide
+        echo "=== Services ==="
+        k3s kubectl get svc -A
+      changed_when: false
+
+- name: Validate service accessibility from localhost via SSH
+  hosts: localhost
+  gather_facts: false
+  vars:
+    master_host: "{{ hostvars[groups['k3s_master'][0]].ansible_host }}"
+  tasks:
+    - name: Display final local URLs
+      ansible.builtin.debug:
+        msg:
+          - "Tornado: http://{{ master_host }}:30080/addresses"
+          - "Prometheus: http://{{ master_host }}:30090"
+          - "Grafana: http://{{ master_host }}:30030 (admin/admin)"
+          - "Ansible VM: {{ hostvars['ansible-vm'].ansible_host }}"
+>>>>>>> 8727e93 (local Mac)
